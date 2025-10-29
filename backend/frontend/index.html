@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Calculadora de Grupos</title>
+    <link rel="stylesheet" href="style.css" />
+
+    <script src="https://cdn.jsdelivr.net/npm/viz.js@2.1.2/viz.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/viz.js@2.1.2/full.render.js"></script>
+  </head>
+  <body>
+    <div class="container">
+      <h1>Calculadora de Grupos por Afinidade</h1>
+      <p>Envie o CSV de votos, defina o tamanho dos grupos e adicione as restrições.</p>
+
+      <form id="group-form">
+        <div class="form-group">
+          <label for="csv_file">1. Arquivo de Votos (CSV)</label>
+          <input type="file" id="csv_file" name="csv_file" accept=".csv" required />
+        </div>
+
+        <div class="form-group">
+          <label for="group_size">2. Tamanho desejado dos grupos</label>
+          <input type="number" id="group_size" name="group_size" value="3" min="2" required />
+        </div>
+
+        <div class="form-group">
+          <label for="restrictions">3. Restrições (Quem NÃO pode ficar com quem)</label>
+          <textarea
+            id="restrictions"
+            name="restrictions"
+            rows="6"
+            placeholder="Exemplo:&#10;Ana,Beto&#10;Carlos,Davi"
+          ></textarea>
+        </div>
+
+        <button type="submit" id="calculate-btn">Calcular Grupos</button>
+      </form>
+
+      <div id="loading" class="hidden">
+        <div class="spinner"></div>
+        <p>Calculando a melhor combinação...</p>
+      </div>
+
+      <div id="results-area" class="hidden">
+        <h2>Resultados</h2>
+        <div id="warnings-container"></div>
+
+        <h3>Visualização do Grafo</h3>
+
+        <div id="graph-download-buttons" class="hidden">
+          <button id="download-svg-btn">Baixar Imagem (SVG)</button>
+        </div>
+        <div id="graph-container">
+          <p class="graph-placeholder">
+            O grafo será renderizado aqui. Pode demorar um pouco em bases de dados grandes.
+          </p>
+        </div>
+
+        <h3>Grupos Formados</h3>
+        <div id="groups-container"></div>
+      </div>
+    </div>
+    <script src="script.js"></script>
+  </body>
+</html>
