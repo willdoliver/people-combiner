@@ -1,16 +1,18 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 import pandas as pd
 import networkx as nx
 from fuzzywuzzy import process
 import io
 import math
-import hashlib # Para gerar cores consistentes para os grupos
+import hashlib
+import os
 
-app = Flask(__name__)
-CORS(app)  # Permite que o frontend se comunique com o backend
 
-# --- Funções de Limpeza e Normalização ---
+FRONTEND_FOLDER = os.path.join(os.path.dirname(__file__), 'frontend')
+
+app = Flask(__name__, static_folder=None)
+CORS(app)
 
 def find_best_match(name, official_names, score_cutoff=85):
     if not name or pd.isna(name):
@@ -35,8 +37,6 @@ def get_name_map(voter_names, all_choices):
         
     return name_map
 
-# --- Funções do Algoritmo de Grafo ---
-
 def build_graph(voter_names, votes_map):
     G = nx.Graph()
     G.add_nodes_from(voter_names)
@@ -45,9 +45,7 @@ def build_graph(voter_names, votes_map):
         for choice in choices:
             if not G.has_node(voter) or not G.has_node(choice):
                 continue
-
             is_mutual = voter in votes_map.get(choice, []) and choice in votes_map.get(voter, [])
-
             if is_mutual:
                 G.add_edge(voter, choice, weight=2)
             else:
@@ -70,24 +68,18 @@ def is_forbidden(student, group, forbidden_pairs):
             return True
     return False
 
-# --- Geração do Código DOT do Grafo (COM LÓGICA DE COR) ---
-
 def hex_to_rgb(hex_code):
-    """Converte #RRGGBB para (R, G, B) tupla."""
     hex_code = hex_code.lstrip('#')
     return tuple(int(hex_code[i:i+2], 16) for i in (0, 2, 4))
 
 def get_luminance(hex_code):
-    """Calcula a luminância percebida de uma cor hex (0=preto, 1=branco)."""
     try:
         r, g, b = hex_to_rgb(hex_code)
-        # Fórmula de luminância (padrão ITU-R BT.709)
         return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255
     except Exception:
-        return 0.5 # Retorna um valor neutro em caso de erro
+        return 0.5 
 
 def generate_random_color(text_seed):
-    """Gera uma cor hex a partir de um texto."""
     hash_object = hashlib.md5(text_seed.encode())
     hex_dig = hash_object.hexdigest()
     return "#" + hex_dig[:6]
@@ -98,12 +90,9 @@ def generate_dot_graph(G, final_groups, forbidden_pairs):
     dot_code.append("    overlap=false;")
     dot_code.append("    splines=true;")
     dot_code.append("    node [shape=box, style=\"rounded,filled\", fontsize=10];")
-    dot_code.append("    edge [fontsize=8];")
+    dot_code.append("    edge [fontsize=8, dir=none];") # Adicionado dir=none global
 
-    # Mapear alunos para (cor_de_fundo, cor_da_fonte)
     student_to_style = {}
-    
-    # NOVA LISTA DE CORES: Uma lista maior de cores pastel seguras
     colors = [
         "#A8E6CF", "#D7BDE2", "#F9E79F", "#F5B7B1", "#AED6F1", "#A2D9CE", 
         "#FAD7A0", "#F1948A", "#D2B4DE", "#A9CCE3", "#ABEBC6", "#FADBD8", 
@@ -115,39 +104,25 @@ def generate_dot_graph(G, final_groups, forbidden_pairs):
     ]
     
     for i, group in enumerate(final_groups):
-        font_color = "black" # Padrão
-        
+        font_color = "black" 
         if i < len(colors):
             group_color = colors[i]
         else:
-            # Se mais grupos que cores pré-definidas, gera uma cor aleatória
             group_color = generate_random_color(group[0]) 
-            
-            # --- A LÓGICA DE CORREÇÃO ---
-            # Se a cor for escura (luminância < 45%), usa fonte branca.
             if get_luminance(group_color) < 0.45:
                 font_color = "white"
-            # --- FIM DA LÓGICA ---
-        
         for student in group:
             student_to_style[student] = (group_color, font_color)
 
-    # Adicionar nós com suas cores de grupo e fonte
     for student in G.nodes():
-        style = student_to_style.get(student, ("#EEEEEE", "black")) # Padrão cinza
+        style = student_to_style.get(student, ("#EEEEEE", "black"))
         color = style[0]
         fontcolor = style[1]
         dot_code.append(f"    \"{student}\" [fillcolor=\"{color}\", fontcolor=\"{fontcolor}\"];")
     
-    # Adicionar arestas
     for u, v, data in G.edges(data=True):
         edge_color = "gray"
         penwidth = "1.0"
-        
-        # --- ESTA É A CORREÇÃO ---
-        # A variável 'dir_val' agora NÃO contém colchetes.
-        dir_val = "dir=none" 
-        # --- FIM DA CORREÇÃO ---
 
         if data['weight'] == 2:
             edge_color = "blue"
@@ -156,21 +131,18 @@ def generate_dot_graph(G, final_groups, forbidden_pairs):
         if frozenset([u,v]) in forbidden_pairs:
             edge_color = "red"
             penwidth = "3.0"
-            dot_code.append(f"    \"{u}\" -> \"{v}\" [color=\"{edge_color}\", penwidth={penwidth}, style=dashed, tooltip=\"Restrição: NÃO pode ficar junto!\", dir=none];")
+            dot_code.append(f"    \"{u}\" -> \"{v}\" [color=\"{edge_color}\", penwidth={penwidth}, style=dashed, tooltip=\"Restrição: NÃO pode ficar junto!\"];")
         else:
-            # A linha corrigida agora junta os atributos corretamente
-            dot_code.append(f"    \"{u}\" -> \"{v}\" [color=\"{edge_color}\", penwidth={penwidth}, {dir_val}];")
+            dot_code.append(f"    \"{u}\" -> \"{v}\" [color=\"{edge_color}\", penwidth={penwidth}];")
 
     dot_code.append("}")
     return "\n".join(dot_code)
 
-
-# --- O Endpoint Principal da API ---
+# --- Rotas do Flask ---
 
 @app.route('/process', methods=['POST'])
 def process_csv():
     try:
-        # 1. Obter dados do request
         csv_file = request.files['csv_file']
         group_size = int(request.form['group_size'])
         restrictions_text = request.form['restrictions']
@@ -178,12 +150,9 @@ def process_csv():
         if not csv_file:
             return jsonify({"error": "Nenhum arquivo CSV enviado."}), 400
 
-        # 2. Ler e Processar o CSV
-        # Voltamos para UTF-8, pois 'latin-1' estava causando 'AraÃºjo'
         data = io.StringIO(csv_file.stream.read().decode("UTF-8"))
         df = pd.read_csv(data)
 
-        # Encontra colunas dinamicamente
         name_col = None
         for col in df.columns:
             if col.lower() == 'nome' or col.lower() == 'name':
@@ -199,21 +168,18 @@ def process_csv():
         if not option_cols:
             return jsonify({"error": "Não foi possível encontrar colunas de 'opção' ou 'escreva'."}), 400
 
-        # 3. Limpeza e Padronização de Nomes
         voter_names = list(df[name_col].dropna().unique())
         all_choices = []
         for col in option_cols:
             all_choices.extend(list(df[col].dropna().unique()))
 
         name_map = get_name_map(voter_names, all_choices)
-        
         valid_official_names = set(voter_names).union(set(name_map.values()))
         
         votes_map = {}
         for _, row in df.iterrows():
             voter_raw = row[name_col]
             voter_official = name_map.get(voter_raw)
-            
             if not voter_official: 
                 continue
             
@@ -221,22 +187,17 @@ def process_csv():
             for col in option_cols:
                 choice_raw = row[col]
                 choice_official = name_map.get(choice_raw)
-                
                 if choice_official and choice_official != voter_official:
                     voter_choices.append(choice_official)
-            
             votes_map[voter_official] = list(set(voter_choices)) 
 
-        # 4. Construir Grafo
-        official_voter_list = list(votes_map.keys())
-        all_students_in_graph = set(official_voter_list)
+        all_students_in_graph = set(votes_map.keys())
         for choices in votes_map.values():
             all_students_in_graph.update(choices)
 
         all_students_in_graph = [s for s in all_students_in_graph if s in valid_official_names]
         G = build_graph(all_students_in_graph, votes_map)
         
-        # 5. Processar Restrições
         forbidden_pairs = set()
         for line in restrictions_text.splitlines():
             if line.strip():
@@ -247,14 +208,11 @@ def process_csv():
                     if name1_official and name2_official:
                         forbidden_pairs.add(frozenset([name1_official, name2_official]))
         
-        # 6. Algoritmo de Agrupamento
         unassigned_students = set(all_students_in_graph) 
         final_groups = []
         warnings = []
-
         all_edges = sorted(G.edges(data=True), key=lambda x: x[2]['weight'], reverse=True)
         
-        # Fase 1: Formar grupos a partir de pares conectados e preencher
         for u, v, data in all_edges:
             if u in unassigned_students and v in unassigned_students:
                 if frozenset([u, v]) not in forbidden_pairs:
@@ -265,11 +223,7 @@ def process_csv():
                     while len(new_group) < group_size and unassigned_students:
                         best_candidate = None
                         max_affinity = -1
-                        
-                        possible_candidates = [
-                            s for s in unassigned_students 
-                            if not is_forbidden(s, new_group, forbidden_pairs)
-                        ]
+                        possible_candidates = [s for s in unassigned_students if not is_forbidden(s, new_group, forbidden_pairs)]
                         
                         for student in possible_candidates:
                             affinity = get_affinity(G, student, new_group)
@@ -282,18 +236,15 @@ def process_csv():
                             unassigned_students.remove(best_candidate)
                         else:
                             break 
-
                     if len(new_group) >= 2: 
                         final_groups.append(new_group)
                     else: 
                         for member in new_group:
                             unassigned_students.add(member)
         
-        # Fase 2: Agrupar alunos "soltos" restantes
         for student in list(unassigned_students): 
             if student not in unassigned_students: 
                  continue
-                 
             for group in final_groups:
                 if len(group) < group_size and not is_forbidden(student, group, forbidden_pairs):
                     group.append(student)
@@ -303,7 +254,6 @@ def process_csv():
         while unassigned_students:
             student = unassigned_students.pop()
             new_group = [student]
-            
             temp_unassigned = list(unassigned_students)
             for other in temp_unassigned:
                 if len(new_group) < group_size:
@@ -312,18 +262,23 @@ def process_csv():
                         unassigned_students.remove(other)
                 else:
                     break
-            
             final_groups.append(new_group)
             if len(new_group) > 1 and len(new_group) < group_size:
                 warnings.append(f"Grupo {len(final_groups)} ({', '.join(new_group)}) foi formado com menos membros ({len(new_group)}) que o desejado ou com alunos sem conexões fortes.")
             elif len(new_group) == 1:
                  warnings.append(f"Grupo {len(final_groups)} ({new_group[0]}) possui apenas 1 membro, pois não foi possível alocá-lo.")
 
-        # 7. Gerar DOT do Grafo
         dot_code = generate_dot_graph(G, final_groups, forbidden_pairs)
-
         return jsonify({"groups": final_groups, "warnings": warnings, "dot_code": dot_code})
 
     except Exception as e:
         app.logger.error(f"Erro no processamento: {e}")
         return jsonify({"error": f"Ocorreu um erro interno: {str(e)}"}), 500
+
+@app.route('/')
+def index():
+    return send_from_directory(FRONTEND_FOLDER, 'index.html')
+
+@app.route('/<path:path>')
+def serve_static(path):
+    return send_from_directory(FRONTEND_FOLDER, path)
