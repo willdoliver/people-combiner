@@ -199,3 +199,34 @@ button[type="submit"]:hover {
 #graph-download-buttons button:hover {
   background-color: #229954;
 }
+
+.error-box {
+  background-color: #fbe5e5;
+  border: 1px solid #e74c3c;
+  color: #c0392b;
+  padding: 15px;
+  border-radius: 8px;
+  text-align: left; /* Alinha à esquerda para listas */
+  margin-bottom: 20px; /* Adiciona um espaço abaixo */
+  margin-top: 20px;
+}
+
+.form-group-checkbox {
+  display: flex;
+  align-items: center;
+  margin-bottom: 25px;
+  background-color: #fdfae5;
+  border: 1px solid #ead893;
+  padding: 12px;
+  border-radius: 4px;
+}
+.form-group-checkbox input[type="checkbox"] {
+  width: auto;
+  margin-right: 12px;
+  transform: scale(1.4);
+}
+.form-group-checkbox label {
+  margin-bottom: 0;
+  font-weight: 500;
+  color: #c09828;
+}

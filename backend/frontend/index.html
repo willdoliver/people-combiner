@@ -17,12 +17,17 @@
       <form id="group-form">
         <div class="form-group">
           <label for="csv_file">1. Arquivo de Votos (CSV)</label>
-          <input type="file" id="csv_file" name="csv_file" accept=".csv" required />
+          <input type="file" id="csv_file" name="csv_file" accept=".csv" />
         </div>
 
         <div class="form-group">
           <label for="group_size">2. Tamanho desejado dos grupos</label>
           <input type="number" id="group_size" name="group_size" value="3" min="2" required />
+        </div>
+
+        <div class="form-group-checkbox">
+          <input type="checkbox" id="balance_gender" name="balance_gender" />
+          <label for="balance_gender">Balancear grupos (meninos e meninas)</label>
         </div>
 
         <div class="form-group">

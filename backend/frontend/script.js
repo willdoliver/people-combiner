@@ -1,5 +1,3 @@
-// --- NOVO: LÓGICA DE DOWNLOAD DO SVG ---
-// Esta função é adicionada no topo e será "ligada" ao botão
 document.getElementById("download-svg-btn").addEventListener("click", function () {
   const graphContainer = document.getElementById("graph-container");
   const svgElement = graphContainer.querySelector("svg");
@@ -9,43 +7,54 @@ document.getElementById("download-svg-btn").addEventListener("click", function (
     return;
   }
 
-  // 1. Pega o conteúdo do SVG como texto
   const svgData = new XMLSerializer().serializeToString(svgElement);
-
-  // 2. Cria um "Blob", que é um objeto de arquivo em memória
   const blob = new Blob([svgData], { type: "image/svg+xml;charset=utf-8" });
-
-  // 3. Cria um link <a> invisível para disparar o download
   const link = document.createElement("a");
   link.href = URL.createObjectURL(blob);
-  link.download = "grafo_grupos.svg"; // Nome do arquivo
-
-  // 4. Adiciona ao corpo, clica, e remove
+  link.download = "grafo_grupos.svg";
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
-
-  // 5. Limpa o objeto da memória
   URL.revokeObjectURL(link.href);
 });
-// --- FIM DA NOVA LÓGICA ---
 
-// --- FUNÇÃO DE SUBMIT (COM PEQUENAS MUDANÇAS) ---
 document.getElementById("group-form").addEventListener("submit", async function (e) {
   e.preventDefault();
 
-  const form = e.target;
   const csvFile = document.getElementById("csv_file").files[0];
+  const warningsContainer = document.getElementById("warnings-container");
+  const resultsArea = document.getElementById("results-area");
+
+  if (!csvFile) {
+    document.getElementById("groups-container").innerHTML = "";
+    document.getElementById("graph-container").innerHTML =
+      '<p class="graph-placeholder">O grafo será renderizado aqui.</p>';
+    document.getElementById("graph-download-buttons").classList.add("hidden");
+
+    let errorMsg = `<strong>Erro: Nenhum arquivo CSV foi selecionado.</strong> Por favor, anexe o arquivo de votos.
+                       <br><br>
+                       O cabeçalho do CSV deve conter:
+                       <ul>
+                           <li>Uma coluna com <code>Nome</code>.</li>
+                           <li>Uma ou mais colunas de <code>opção</code> (ex: 'Escreva o nome da sua primeira opção...').</li>
+                           <li>(Opcional) Uma coluna <code>Gênero</code> (com 'Masculino'/'Feminino') se for balancear.</li>
+                       </ul>`;
+
+    warningsContainer.innerHTML = `<div class="error-box">${errorMsg}</div>`;
+    resultsArea.classList.remove("hidden");
+    return;
+  }
+
+  const form = e.target;
   const groupSize = document.getElementById("group_size").value;
   const restrictions = document.getElementById("restrictions").value;
+  const balanceGender = document.getElementById("balance_gender").checked;
 
   const loadingEl = document.getElementById("loading");
-  const resultsArea = document.getElementById("results-area");
-  const warningsContainer = document.getElementById("warnings-container");
   const groupsContainer = document.getElementById("groups-container");
   const graphContainer = document.getElementById("graph-container");
   const calculateBtn = document.getElementById("calculate-btn");
-  const graphDownloadButtons = document.getElementById("graph-download-buttons"); // Novo!
+  const graphDownloadButtons = document.getElementById("graph-download-buttons");
 
   // Resetar UI
   loadingEl.classList.remove("hidden");
@@ -54,7 +63,7 @@ document.getElementById("group-form").addEventListener("submit", async function 
   groupsContainer.innerHTML = "";
   graphContainer.innerHTML =
     '<p class="graph-placeholder">O grafo será renderizado aqui. Pode demorar um pouco em bases de dados grandes.</p>';
-  graphDownloadButtons.classList.add("hidden"); // Esconde o botão de download
+  graphDownloadButtons.classList.add("hidden");
   calculateBtn.disabled = true;
 
   // Criar FormData para enviar
@@ -62,10 +71,10 @@ document.getElementById("group-form").addEventListener("submit", async function 
   formData.append("csv_file", csvFile);
   formData.append("group_size", groupSize);
   formData.append("restrictions", restrictions);
+  formData.append("balance_gender", balanceGender);
 
   try {
     const response = await fetch("/process", {
-      // Porta 5003
       method: "POST",
       body: formData,
     });
@@ -108,13 +117,11 @@ document.getElementById("group-form").addEventListener("submit", async function 
 
     // 3. Renderizar o Grafo
     if (data.dot_code) {
-      graphContainer.innerHTML = ""; // Limpa o placeholder
+      graphContainer.innerHTML = "";
       try {
         const viz = new Viz();
         const svg = await viz.renderString(data.dot_code);
         graphContainer.innerHTML = svg;
-
-        // NOVO: Mostra o botão de download APÓS o grafo ser renderizado
         graphDownloadButtons.classList.remove("hidden");
       } catch (vizError) {
         graphContainer.innerHTML = `<p style="color: red;">Erro ao renderizar o grafo: ${vizError.message}</p>`;
@@ -125,9 +132,9 @@ document.getElementById("group-form").addEventListener("submit", async function 
     resultsArea.classList.remove("hidden");
   } catch (error) {
     console.error("Erro ao calcular grupos:", error);
+    resultsArea.classList.remove("hidden");
     warningsContainer.innerHTML = `<p style="background-color: #fbe5e5; border-color: #e74c3c; color: #c0392b;">Erro: ${error.message}</p>`;
   } finally {
-    // Resetar UI
     loadingEl.classList.add("hidden");
     calculateBtn.disabled = false;
   }
