@@ -154,7 +154,7 @@ def generate_dot_graph(G, final_groups, forbidden_pairs):
     return "\n".join(dot_code)
 
 def find_best_candidate(unassigned_students, group, G, forbidden_pairs, 
-                        balance_gender=False, gender_map=None, balance_weight=0.5):
+                        balance_gender=False, student_gender_map=None, balance_weight=0.5): # <-- Argumento consistente
     
     if not unassigned_students:
         return None
@@ -165,7 +165,7 @@ def find_best_candidate(unassigned_students, group, G, forbidden_pairs,
         return None 
 
     # Lógica sem balanceamento
-    if not balance_gender or not gender_map:
+    if not balance_gender or not student_gender_map:
         best_candidate = None
         max_affinity = -1 
         
@@ -177,14 +177,14 @@ def find_best_candidate(unassigned_students, group, G, forbidden_pairs,
         
         return best_candidate 
 
-    # Lógica com balanceamento
-    current_genders = [gender_map.get(s) for s in group if s in gender_map]
+    # Lógica de balanceamento
+    current_genders = [student_gender_map.get(s) for s in group if s in student_gender_map]
     current_m = current_genders.count('M')
     current_f = current_genders.count('F')
     
-    candidates_m = [s for s in possible_candidates if gender_map.get(s) == 'M']
-    candidates_f = [s for s in possible_candidates if gender_map.get(s) == 'F']
-    candidates_unknown = [s for s in possible_candidates if gender_map.get(s) not in ['M', 'F']]
+    candidates_m = [s for s in possible_candidates if student_gender_map.get(s) == 'M']
+    candidates_f = [s for s in possible_candidates if student_gender_map.get(s) == 'F'] # <-- CORRIGIDO
+    candidates_unknown = [s for s in possible_candidates if student_gender_map.get(s) not in ['M', 'F']]
 
     scores_m = {s: get_affinity(G, s, group) for s in candidates_m}
     scores_f = {s: get_affinity(G, s, group) for s in candidates_f}
@@ -221,10 +221,10 @@ def find_best_candidate(unassigned_students, group, G, forbidden_pairs,
         elif gender == 'F':
             if current_f > current_m: 
                 weight = balance_weight
-        
+
         weighted_scores.append((student, affinity * weight))
     
-    best_candidate, best_weighted_score = max(weighted_scores, key=lambda item: item[1])
+    best_candidate, _ = max(weighted_scores, key=lambda item: item[1])
     return best_candidate
 
 # Rotas do Flask
@@ -249,34 +249,45 @@ def process_csv():
 
         # Ler e Processar o CSV
         data = io.StringIO(csv_file.stream.read().decode("UTF-8"))
-        df = pd.read_csv(data)
-        app.logger.info("Arquivo CSV lido com sucesso.")
 
-        # Encontrar Colunas
-        name_col = next((col for col in df.columns if 'nome' in col.lower() and 'usuário' not in col.lower()), None)
-        option_cols = [col for col in df.columns if 'opção' in col.lower() or 'escreva' in col.lower()]
-        gender_col = next((col for col in df.columns if 'gênero' in col.lower() or 'sexo' in col.lower()), None)
+        df = pd.read_csv(data) 
+        app.logger.info("Arquivo CSV lido com sucesso (Delimitador: VÍRGULA).")
+
+        # Colunas obrigatórias
+        name_col = next((col for col in df.columns if 'nome completo sem abreviações' in col.lower()), None)
+        timestamp_col = next((col for col in df.columns if 'carimbo' in col.lower() or 'timestamp' in col.lower()), None)
+        
+        # Colunas de lógica
+        choice_col = next((col for col in df.columns if 'escolha' in col.lower()), None)
+        gender_col = next((col for col in df.columns if col.lower() == 'sexo' or 'gênero' in col.lower()), None)
 
         if not name_col:
             app.logger.error("Coluna 'Nome' não encontrada.")
-            return jsonify({"error": "Não foi possível encontrar a coluna 'Nome' ou similar."}), 400
-        if not option_cols:
-            app.logger.error("Colunas de 'opção' não encontradas.")
-            return jsonify({"error": "Não foi possível encontrar colunas de 'opção' ou 'escreva'."}), 400
-
+            return jsonify({"error": "Não foi possível encontrar a coluna de Nome ('Escreva seu nome completo sem abreviações.')."}), 400
+        if not timestamp_col:
+            app.logger.error("Coluna 'Carimbo de data/hora' não encontrada.")
+            return jsonify({"error": "Para o filtro de recência, o CSV precisa de uma coluna de 'Carimbo de data/hora'."}), 400
+        if not choice_col:
+            app.logger.error("Coluna única de escolhas ('Escolha...') não encontrada.")
+            return jsonify({"error": "O CSV precisa da coluna única de escolhas ('Escolha...')."}), 400
+        
         if balance_gender and not gender_col:
-            app.logger.error("Balanceamento pedido, mas coluna 'Gênero' não encontrada.")
+            app.logger.error("Balanceamento pedido, mas coluna 'Gênero' ou 'Sexo' não encontrada.")
             return jsonify({"error": "Para balancear, o CSV precisa de uma coluna chamada 'Gênero' ou 'Sexo', preenchida com 'Masculino' ou 'Feminino'."}), 400
 
-        # Limpeza e Mapeamento
+        df = df.sort_values(by=timestamp_col, ascending=False)
+        df = df.drop_duplicates(subset=[name_col], keep='first')
+        app.logger.info(f"Filtro de recência aplicado. {len(df)} votantes únicos.")
+
         voter_names = list(df[name_col].dropna().unique())
-        all_choices = []
-        for col in option_cols:
-            all_choices.extend(list(df[col].dropna().unique()))
 
-        name_map = get_name_map(voter_names, all_choices)
+        all_choices_flat = []
+        for choices_str in df[choice_col].dropna():
+            all_choices_flat.extend([c.strip() for c in str(choices_str).split(';') if c.strip()])
+            
+        name_map = get_name_map(voter_names, all_choices_flat)
         valid_official_names = set(voter_names).union(set(name_map.values()))
-
+        
         votes_map = {}
         student_gender_map = {} 
 
@@ -285,10 +296,11 @@ def process_csv():
             voter_official = name_map.get(voter_raw)
             if not voter_official: 
                 continue
-            
+
+            choices_str = str(row[choice_col])
+
             voter_choices = []
-            for col in option_cols:
-                choice_raw = row[col]
+            for choice_raw in [c.strip() for c in choices_str.split(';') if c.strip()]:
                 choice_official = name_map.get(choice_raw)
                 if choice_official and choice_official != voter_official:
                     voter_choices.append(choice_official)
@@ -302,8 +314,8 @@ def process_csv():
                     student_gender_map[voter_official] = 'F'
                 else:
                     student_gender_map[voter_official] = 'U'
-        
-        app.logger.info(f"Mapa de votos e mapa de gêneros construídos. {len(student_gender_map)} gêneros mapeados.")
+
+        app.logger.info("Mapa de votos e gêneros construídos com sucesso.")
 
         # Construir Grafo e Restrições
         all_students_in_graph = set(votes_map.keys())
@@ -352,12 +364,11 @@ def process_csv():
                     final_groups.append(new_group)
         
         app.logger.info(f"Fase 1 concluída. {len(final_groups)} grupos formados. {len(unassigned_students)} alunos restantes.")
-        app.logger.info("Iniciando Fase do agrupamento...")
         
+        # Encaixes e Sobras
         for student in list(unassigned_students): 
             if student not in unassigned_students: 
                  continue
-            
             best_group_to_join = None
             max_affinity = -1 
             
@@ -384,7 +395,6 @@ def process_csv():
                 best_group_to_join.append(student)
                 unassigned_students.remove(student)
 
-        app.logger.info("Iniciando Fase 3 do agrupamento...")
         while unassigned_students:
             student = unassigned_students.pop()
             new_group = [student]
@@ -403,10 +413,10 @@ def process_csv():
             final_groups.append(new_group)
             if len(new_group) == 1:
                  warnings.append(f"Grupo {len(final_groups)} ({new_group[0]}) possui apenas 1 membro, pois não foi possível alocá-lo.")
-            elif balance_gender and len(new_group) < group_size:
+            elif len(new_group) < group_size:
                  warnings.append(f"Grupo {len(final_groups)} ({', '.join(new_group)}) foi formado com menos membros que o desejado.")
 
-        app.logger.info("Fase 3 concluída. Agrupamento finalizado.")
+        app.logger.info("Agrupamento finalizado.")
         
         dot_code = generate_dot_graph(G, final_groups, forbidden_pairs)
         app.logger.info("Código DOT do grafo gerado.")
